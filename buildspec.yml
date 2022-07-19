@@ -1,0 +1,39 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_REGION: "ap-northeast-2"
+
+phases:
+  install:
+    runtime-versions:
+      java: corretto11
+
+  pre_build:
+    commands:
+      - docker login --username AWS -p $(aws ecr get-login-password --region ap-northeast-2) 489478819445.dkr.ecr.ap-northeast-2.amazonaws.com
+      - docker pull 489478819445.dkr.ecr.ap-northeast-2.amazonaws.com/amazoncorretto:11 || true
+
+  build:
+    commands:
+      - echo "Build Sprinb Batch module."
+      - mvn package
+      - TAG=${CODEBUILD_RESOLVED_SOURCE_VERSION}
+      - LATEST=latest
+      - echo "Pack built modules into docker and push to ECR"
+      - pwd
+      - echo "Build Spring Batch docker image"
+      - docker build -f ./Dockerfile -t $ECR_REPO_URI:$LATEST .
+      - docker images
+      - docker tag $ECR_REPO_URI:$LATEST $ECR_REPO_URI:$TAG
+
+  post_build:
+    commands:
+      - echo "Pushing Spring Batch"
+      - docker login --username AWS -p $(aws ecr get-login-password --region ap-northeast-2) "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.ap-northeast-2.amazonaws.com"
+      - docker push $ECR_REPO_URI:$TAG
+      - docker push $ECR_REPO_URI:$LATEST
+      - echo "Finished ECR push."
+      - echo "Setting MWAA (Airflow) variable for pushed image."
+      - chmod +x ./airflow
+      - ./airflow variables set spring-batch-lab-image $ECR_REPO_URI:$TAG

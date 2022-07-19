@@ -1,0 +1,51 @@
+#!/bin/bash
+
+aws --version
+
+# Check if user provided arguments
+if [ "$*" = "" ]; then
+     echo "Provide at least one argument to the Airflow CLI";
+     exit 1;
+fi
+
+# Check if environment variable MWAA_ENVIRONMENT is provided
+if [ "$MWAA_ENVIRONMENT" = "" ]; then
+     echo "Provide the name of your environment in variable \$MWAA_ENVIRONMENT";
+     exit 1;
+fi
+
+# Get CLI token and web server hostname from AWS MWAA CLI
+CLI_JSON=$(aws mwaa create-cli-token --name $MWAA_ENVIRONMENT)
+
+# Parse results
+CLI_TOKEN=$(echo $CLI_JSON | jq -r '.CliToken')
+echo ">>> CLI_TOKEN = $CLI_TOKEN"
+echo
+
+WEB_SERVER_HOSTNAME=$(echo $CLI_JSON | jq -r '.WebServerHostname')
+echo ">>> WEB_SERVER_HOSTNAME = $WEB_SERVER_HOSTNAME"
+echo
+
+# Trigger request of Airflow CLI from Amazon MWAA
+RESPONSE=$(curl -s --request POST "https://$WEB_SERVER_HOSTNAME/aws_mwaa/cli" \
+     --header "Authorization: Bearer $CLI_TOKEN" \
+     --header "Content-Type: text/plain" \
+     --data-raw "$*")
+
+# Check if we have a valid JSON to be parsed...
+if jq -e . >/dev/null 2>&1 <<<"$RESPONSE"; then
+     # If JSON is valid then get stdout and stderr
+     STDOUT=$(echo $RESPONSE | jq -r '.stdout')
+     STDERR=$(echo $RESPONSE | jq -r '.stderr')
+
+     # Decode the results from Base64
+     echo $STDOUT | base64 -d
+
+     if [ "$STDERR" != "" ]; then
+          echo "Error:"
+          echo $STDERR | base64 -d
+     fi
+else
+     # In case of invalid JSON just return the message to the terminal
+     echo $RESPONSE
+fi
